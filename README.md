@@ -1,3 +1,7 @@
 # cc-ssh-server
 
-Currently hardcoded for `leond` - Edit this in `/src/index.ts`
+## Using (for now)
+
+1. `yarn`
+2. `ssh-keygen`, keeping `id_rsa` in this project folder
+3. Edit default username/remote in `/src/index.ts`
