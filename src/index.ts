@@ -1,9 +1,9 @@
 import { exec, execSync } from "child_process";
 import { Server } from "ws";
-import { Client } from "ssh2";
+import { Client, ClientChannel } from "ssh2";
 import AnsiParser from "node-ansiparser";
 import { readFileSync } from "fs";
-import { KeyPacket, Packet, PacketType } from "./Packet";
+import { CharPacket, KeyPacket, Packet, PacketType, TerminalLoginPacket } from "./Packet";
 
 const wss = new Server({
   port: 8080,
@@ -46,65 +46,106 @@ wss.on("connection", (ws) => {
     },
   });
 
-  const terminateConnection = (reason: string = 'Connection ended without a reason.') => {
+  let stream: ClientChannel | undefined;
+
+  const terminateConnection = (
+    reason: string = "Connection ended without a reason."
+  ) => {
     const packet = new Packet(PacketType.disconnect, { s: reason });
 
     ws.send(packet.encode(), () => {
+      if (stream) stream.end();
       ssh.end();
       ws.close();
-    })
-  }
+    });
+  };
 
-  ssh.on("ready", () => {
-    ssh.shell(
-      {
-        cols: 51,
-        rows: 19,
-      },
-      (err, stream) => {
-        stream.on("close", () => {
-          terminateConnection('SSH Connection Ended')
-        });
-
-        stream.on("data", (data: Buffer) => {
-          parser.parse(data.toString());
-        });
-
-        ws.on("message", (data: Buffer) => {
-          const packet = Packet.parse(data.toString());
-          switch(packet.type) {
-            case PacketType.keypress:
-              const keyPacket = packet as KeyPacket
-              if (keyPacket.payload.kc >= 65 && keyPacket.payload.kc <= 90) {
-                stream.stdin.write(String.fromCharCode(keyPacket.payload.kc).toLowerCase())
-              } else if (keyPacket.payload.kc >= 32 && keyPacket.payload.kc <= 126) {
-                stream.stdin.write(String.fromCharCode(keyPacket.payload.kc))
-              } else if (keyPacket.payload.kc === 257) {
-                stream.stdin.write('\r\n')
-              } else if (keyPacket.payload.kc === 259) {
-                stream.stdin.write('\b')
-              } else {
-                console.log(keyPacket.payload.kc)
-              }
+  ws.on("message", (data: Buffer) => {
+    const packet = Packet.parse(data.toString());
+    try {
+      switch (packet.type) {
+        case PacketType.keypress:
+          const keyPacket = packet as KeyPacket;
+          
+          if (stream) {
+            switch(keyPacket.payload.kc) {
+              // left
+              case 262:
+                stream.stdin.write("\u001b[C");
+                break;
+              case 263:
+                // right
+                stream.stdin.write("\u001b[D");
+                break;
+              // down
+              case 264:
+                stream.stdin.write("\u001b[B");
+                break;
+              // up
+              case 265:
+                stream.stdin.write("\u001b[A");
+                break;
+              // enter
+              case 257:
+                stream.stdin.write("\r");
+                break;
+              // enter
+              case 259:
+                stream.stdin.write("\b");
+                break;
+              default:
+                console.log(keyPacket.payload.kc);
+            }
           }
-        });
+          break;
+        case PacketType.char:
+          const charPacket = packet as CharPacket;
+          stream?.stdin.write(charPacket.payload.char);
+          break;
+        case PacketType.login:
+          if (stream)
+            return terminateConnection(
+              "A connection has already been established"
+            );
+          const loginPacket = packet as TerminalLoginPacket;
+          ssh.connect({
+            host: loginPacket.payload.remote,
+            username: loginPacket.payload.username,
+            privateKey: readFileSync("id_rsa"),
+            tryKeyboard: true,
+          });
+          ssh.on("ready", () => {
+            ssh.shell(
+              {
+                cols: loginPacket.payload.width,
+                rows: loginPacket.payload.height,
+              },
+              (err, s) => {
+                stream = s;
+                
+                stream.on("close", () => {
+                  terminateConnection("SSH Connection Ended");
+                });
+  
+                stream.on("data", (data: Buffer) => {
+                  parser.parse(data.toString());
+                });
+              }
+            );
+          });
+          break;
       }
-    );
+    } catch(e) {
+      terminateConnection(e.message);
+    }
   });
 
   ssh.on("error", (err) => {
     console.log(err);
-    terminateConnection(err.message)
+    terminateConnection(err.message);
   });
 
-  ws.on('close', () => {
+  ws.on("close", () => {
     ssh.end();
-  })
-
-  ssh.connect({
-    host: "127.0.0.1",
-    username: "leond",
-    privateKey: readFileSync("id_rsa"),
-    tryKeyboard: true,
   });
 });

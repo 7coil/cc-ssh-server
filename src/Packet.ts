@@ -1,8 +1,11 @@
+import { json } from "./json";
+
 enum PacketType {
   login = "login",
   disconnect = "disconnect",
   error = "error",
   keypress = "keypress",
+  char = "char",
   inst_p = "inst_p",
   inst_o = "inst_o",
   inst_x = "inst_x",
@@ -17,10 +20,15 @@ interface GenericPayload {
   s?: string;
   flag?: string;
   collected?: string;
-  params?: string;
+  params?: number[];
   dcs?: string;
   kc?: number;
+  char?: string;
   held?: boolean;
+  width?: number;
+  height?: number;
+  remote?: string;
+  username?: string
 }
 
 class Packet<Type = PacketType, Payload = GenericPayload> {
@@ -37,13 +45,13 @@ class Packet<Type = PacketType, Payload = GenericPayload> {
       t: this.type,
       p: this.payload,
     };
-    console.log("encoded", data);
-    return JSON.stringify(data);
+    console.log(data);
+    return json.stringify(data);
   }
 
   static parse(data: string): Packet {
-    const json = JSON.parse(data);
-    return new Packet(json.t, json.p);
+    const parsed = json.parse(data);
+    return new Packet(parsed.t, parsed.p);
   }
 }
 
@@ -53,6 +61,14 @@ interface KeyPacket
     {
       kc: number;
       held: boolean;
+    }
+  > {}
+
+interface CharPacket
+  extends Packet<
+    PacketType.char,
+    {
+      char: string;
     }
   > {}
 
@@ -82,6 +98,17 @@ interface TerminalInstcPacket
     }
   > {}
 
+interface TerminalLoginPacket
+  extends Packet<
+    PacketType.login,
+    {
+      width: number;
+      height: number;
+      remote: string;
+      username: string;
+    }
+  > {}
+
 interface TerminalDisconnectPacket
   extends Packet<
     PacketType.disconnect,
@@ -94,8 +121,10 @@ export {
   Packet,
   PacketType,
   KeyPacket,
+  CharPacket,
   TerminalInstpPacket,
   TerminalInstxPacket,
   TerminalInstcPacket,
+  TerminalLoginPacket,
   TerminalDisconnectPacket,
 };
